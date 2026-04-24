@@ -123,14 +123,30 @@ async def seed_db():
                     else:
                         val = base_hrv + math.sin(day/7.0)*2 + random.gauss(0, 1.0)
                 else:
-                    # Normal patients
-                    val = base_hrv + math.sin(day/7.0)*2 + random.gauss(0, 1.5)
+                    # Normal patients - randomize some to be very close to the threshold (29-33) to allow dynamic flagging
+                    is_borderline = random.random() < 0.15 # 15% of patients are borderline
+                    if is_borderline and day <= 7:
+                        val = random.uniform(28.5, 33.5) + random.gauss(0, 0.5)
+                    else:
+                        val = base_hrv + math.sin(day/7.0)*2 + random.gauss(0, 1.5)
                 
+                # Also generate random Heart_Rate readings for the new Tachycardia PDF
+                hr_val = random.uniform(60, 90) + random.gauss(0, 2)
+                if random.random() < 0.08: # 8% are tachycardic
+                    hr_val = random.uniform(92, 102)
+                    
                 readings.append(BiomarkerReading(
                     patient_id=p.id,
-                    biomarker="HRV",
+                    biomarker="HRV_SDNN",
                     value=round(val, 2),
                     unit="ms",
+                    recorded_at=reading_date
+                ))
+                readings.append(BiomarkerReading(
+                    patient_id=p.id,
+                    biomarker="Heart_Rate",
+                    value=round(hr_val, 2),
+                    unit="bpm",
                     recorded_at=reading_date
                 ))
                 

@@ -7,7 +7,7 @@ async def evaluate_patient(db, pt, rule):
     # Fetch last reading
     readings_query = select(BiomarkerReading).where(
         BiomarkerReading.patient_id == pt.id,
-        BiomarkerReading.biomarker == rule.biomarker
+        BiomarkerReading.biomarker.in_([rule.biomarker, rule.biomarker.replace("_SDNN", ""), "HRV"])
     ).order_by(BiomarkerReading.recorded_at.desc()).limit(1)
     result = await db.execute(readings_query)
     reading = result.scalar_one_or_none()

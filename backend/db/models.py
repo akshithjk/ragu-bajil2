@@ -81,6 +81,9 @@ class Patient(Base):
     enrolled_at = Column(DateTime(timezone=True))
     status = Column(String)
     device_id = Column(String)
+    
+    readings = relationship("BiomarkerReading", backref="patient")
+    evaluations = relationship("PatientEvaluation", backref="patient")
 
 class BiomarkerReading(Base):
     __tablename__ = "biomarker_readings"
@@ -116,9 +119,11 @@ class PVReport(Base):
     trial_id = Column(String, ForeignKey("trials.id"))
     triggered_by_guideline_id = Column(Integer, ForeignKey("guidelines.id"))
     rule_id = Column(Integer, ForeignKey("monitoring_rules.id"))
+    run_id = Column(String, ForeignKey("pipeline_runs.id"))
     severity_breakdown = Column(JSON)
     status = Column(String)
     pdf_path = Column(String)
+    report_html = Column(String)
     generated_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class User(Base):
@@ -152,6 +157,7 @@ class PipelineRun(Base):
     id = Column(String, primary_key=True, index=True)
     guideline_id = Column(Integer, ForeignKey("guidelines.id"))
     overall_status = Column(String, default='IDLE')
+    confidence_score = Column(Float, nullable=True)
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     patients_evaluated = Column(Integer, default=0)

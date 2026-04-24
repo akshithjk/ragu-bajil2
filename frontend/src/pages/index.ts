@@ -1,3 +1,4 @@
+export { LandingPage } from './LandingPage';
 export { Login } from './Login';
 export { LoginRegulatory } from './LoginRegulatory';
 export { LoginDataManager } from './LoginDataManager';

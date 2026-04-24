@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from db.database import engine, Base
 from core.middleware import JWTMiddleware, SiteScopeMiddleware, AuditMiddleware
 
-from api import auth, guidelines, rules, patients, evaluations, reports, pipeline
+from api import auth, guidelines, rules, patients, evaluations, reports, pipeline, admin
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,6 +39,7 @@ app.include_router(patients.router)
 app.include_router(evaluations.router)
 app.include_router(reports.router)
 app.include_router(pipeline.router)
+app.include_router(admin.router)
 
 @app.get("/")
 async def root():

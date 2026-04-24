@@ -4,14 +4,14 @@ from sqlalchemy import select
 from db.models import Rule, RuleStatus
 from agents.agent1_parser import GuidelineExtraction
 
-async def run_agent2(db: AsyncSession, extraction: GuidelineExtraction, trial_id: str, source_guideline_id: int) -> int:
+async def run_agent2(db: AsyncSession, extraction: GuidelineExtraction, trial_id: str, source_guideline_id: int, rule_status: str = "PENDING") -> int:
     query = select(Rule).where(
         Rule.trial_id == trial_id,
         Rule.biomarker == extraction.biomarker,
         Rule.status == RuleStatus.ACTIVE
-    )
+    ).order_by(Rule.id.desc()).limit(1)
     result = await db.execute(query)
-    old_rule = result.scalar_one_or_none()
+    old_rule = result.scalars().first()
 
     diff_summary = {}
     new_version = "1.0"
@@ -33,8 +33,7 @@ async def run_agent2(db: AsyncSession, extraction: GuidelineExtraction, trial_id
         else:
             new_version = f"{major}.{int(minor) + 1}"
             
-        old_rule.status = RuleStatus.SUPERSEDED
-        db.add(old_rule)
+        # We DO NOT supersede the old rule yet. It stays ACTIVE until a human explicitly approves the new rule.
     else:
         diff_summary = {"new_rule": True}
         
@@ -44,7 +43,7 @@ async def run_agent2(db: AsyncSession, extraction: GuidelineExtraction, trial_id
         biomarker=extraction.biomarker,
         operator=extraction.operator,
         threshold=extraction.new_value,
-        status=RuleStatus.ACTIVE,
+        status=rule_status,
         diff_summary=diff_summary,
         source_guideline_id=source_guideline_id
     )

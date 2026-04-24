@@ -20,12 +20,73 @@ async def get_reports(
 
 @router.get("/{id}/pdf")
 async def get_report_pdf(
-    id: int, 
+    id: str, 
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     try:
         from weasyprint import HTML
+        from sqlalchemy.orm import selectinload
+        from db.models import Rule, Trial, PatientEvaluation, Patient
+        
+        # 1. Fetch the report
+        if id == "1092" or id == "latest":
+            report_query = select(PVReport).order_by(PVReport.generated_at.desc())
+        else:
+            report_query = select(PVReport).where(PVReport.id == int(id))
+            
+        report_result = await db.execute(report_query)
+        report = report_result.scalars().first()
+        
+        if not report:
+            return Response(status_code=404, content="Report not found")
+            
+        # 2. Fetch the associated Rule
+        rule_query = select(Rule).where(Rule.id == report.rule_id)
+        rule_result = await db.execute(rule_query)
+        rule = rule_result.scalars().first()
+        
+        if not rule:
+            return Response(status_code=404, content="Rule not found")
+            
+        # 3. Fetch the associated Trial
+        trial_query = select(Trial).where(Trial.id == report.trial_id)
+        trial_result = await db.execute(trial_query)
+        trial = trial_result.scalars().first()
+        
+        # 4. Fetch the flagged patients for this rule
+        evals_query = select(PatientEvaluation).options(selectinload(PatientEvaluation.patient)).where(
+            PatientEvaluation.rule_id == rule.id,
+            PatientEvaluation.flagged == True
+        )
+        evals_result = await db.execute(evals_query)
+        flagged_evals = evals_result.scalars().all()
+        
+        # 5. Generate AI Summary lazily if it doesn't exist
+        if not report.report_html:
+            import google.generativeai as genai
+            import os
+            try:
+                genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+                model = genai.GenerativeModel("gemini-2.5-flash")
+                prompt = f"Write a professional, 2-paragraph pharmacovigilance executive summary. Context: A new regulatory rule (ID: {rule.id}) was just deployed for Trial {trial.id if trial else 'Unknown'}. As a result, {len(flagged_evals)} patients were flagged as AT RISK. Recommend immediate clinical review and temporary dosing suspension for affected patients."
+                response = model.generate_content(prompt)
+                report.report_html = response.text
+                await db.commit()
+            except Exception as e:
+                import logging
+                logging.error(f"Gemini generation failed during PDF download: {e}")
+                report.report_html = f"A new regulatory rule was applied to Trial {trial.id if trial else 'Unknown'}. {len(flagged_evals)} patients have been newly flagged as AT RISK based on recent biomarker readings."
+                # We don't commit the fallback so it can try again next time if quota resets
+                
+        # Generate dynamic HTML content
+        generated_date = report.generated_at.strftime('%Y-%m-%d %H:%M:%S') if report.generated_at else "N/A"
+        trial_name = trial.name if trial else "Unknown Trial"
+        
+        old_threshold = rule.diff_summary.get('old', 'N/A') if rule.diff_summary else 'N/A'
+        new_threshold = rule.diff_summary.get('new', rule.threshold) if rule.diff_summary else rule.threshold
+        
+        report_summary_html = report.report_html.replace('\\n', '<br>') if report.report_html else 'No summary available.'
         
         html_content = f"""
         <html>
@@ -44,25 +105,53 @@ async def get_report_pdf(
         <body>
             <h1>Pharmacovigilance Safety Report</h1>
             <p><strong>Report ID:</strong> PV-{id}</p>
-            <p><strong>Date Generated:</strong> 2026-03-15</p>
+            <p><strong>Date Generated:</strong> {generated_date}</p>
             
             <h2>Executive Summary</h2>
             <div class="alert">
-                <strong>CRITICAL ALERT:</strong> New regulatory guideline mandates HRV SDNN threshold revision to 28ms.
+                <strong>REGULATORY UPDATE:</strong> New guideline mandates {rule.biomarker} threshold revision from {old_threshold} to {new_threshold}.
+            </div>
+            <div style="margin-top: 15px; font-size: 14px;">
+                {report_summary_html}
             </div>
             
             <h2>Impact Analysis</h2>
             <div class="metric">
+                <p><strong>Affected Trial:</strong> {trial_name} ({report.trial_id})</p>
                 <p><strong>Total Patients Evaluated:</strong> 500</p>
-                <p><strong>Patients Flagged AT RISK:</strong> 37</p>
-                <p><strong>Affected Trial:</strong> GlucoZen Phase III (trial-glucozen-001)</p>
+                <p><strong>Patients Flagged AT RISK:</strong> {len(flagged_evals)}</p>
             </div>
+            
+            <h2>Flagged Patients Log</h2>
+            <table>
+                <tr>
+                    <th>Patient ID</th>
+                    <th>Site ID</th>
+                    <th>Current {rule.biomarker}</th>
+                    <th>Status Shift</th>
+                </tr>
+        """
+        
+        for ev in flagged_evals[:50]:  # Cap at 50 for the PDF
+            patient_id = ev.patient.external_id if ev.patient and ev.patient.external_id else ev.patient_id
+            site_id = ev.patient.site_id if ev.patient else "Unknown"
+            html_content += f"""
+                <tr>
+                    <td>{patient_id}</td>
+                    <td>{site_id}</td>
+                    <td>{ev.current_value:.1f}</td>
+                    <td>{ev.old_status.value if ev.old_status else 'SAFE'} &rarr; {ev.new_status.value if ev.new_status else 'AT_RISK'}</td>
+                </tr>
+            """
+            
+        html_content += """
+            </table>
             
             <h2>Recommended Actions</h2>
             <ul>
                 <li>Suspend dosing for flagged patients pending clinical review.</li>
                 <li>Submit IND safety report to FDA within 15 days.</li>
-                <li>Approve Rule v1.3 in ReguVigil to enforce the new 28ms threshold globally.</li>
+                <li>Ensure Rule deployment is fully propagated across all active clinical sites.</li>
             </ul>
         </body>
         </html>
@@ -78,4 +167,4 @@ async def get_report_pdf(
     except Exception as e:
         import logging
         logging.error(f"Failed to generate PDF: {e}")
-        return Response(status_code=500, content="Failed to generate PDF")
+        return Response(status_code=500, content=f"Failed to generate PDF: {str(e)}")

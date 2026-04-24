@@ -9,8 +9,8 @@ from sqlalchemy.orm import sessionmaker
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from backend.db.database import engine, Base, AsyncSessionLocal
-from backend.db.models import (
+from db.database import engine, Base, AsyncSessionLocal
+from db.models import (
     User, Trial, TrialSite, Patient, BiomarkerReading, 
     Guideline, Rule, RuleStatus, GuidelineStatus, EvaluationStatus, PatientEvaluation
 )
@@ -55,13 +55,11 @@ async def seed_db():
         readings = []
         
         now = datetime.now(timezone.utc)
-        
-        # We need specific target patients from the frontend demo:
-        # PT-8091 (Site 3, HRV=24), PT-1102 (Site 3, HRV=26), PT-4399 (Site 8, HRV=27.5)
+                # We need specific target patients from the frontend demo:
         target_patients = {
-            "PT-8091": {"site": "site-3", "hrv": 24.0, "status": "AT_RISK"},
-            "PT-1102": {"site": "site-3", "hrv": 26.0, "status": "AT_RISK"},
-            "PT-4399": {"site": "site-8", "hrv": 27.5, "status": "AT_RISK"}
+            "PT-0101": {"site": "site-3", "hrv": 24.0, "status": "AT_RISK"},
+            "PT-0102": {"site": "site-3", "hrv": 26.0, "status": "AT_RISK"},
+            "PT-0351": {"site": "site-8", "hrv": 27.0, "status": "AT_RISK"}
         }
 
         patient_count = 1
@@ -69,34 +67,42 @@ async def seed_db():
             for _ in range(50):
                 pid = f"PT-{patient_count:04d}"
                 
-                # Check if we need to insert our target patients
-                # We overwrite the first few to be our specific ones
-                if site.id == "site-3" and pid == "PT-0101": pid = "PT-8091"
-                elif site.id == "site-3" and pid == "PT-0102": pid = "PT-1102"
-                elif site.id == "site-8" and pid == "PT-0351": pid = "PT-4399"
-                
                 is_target = pid in target_patients
                 target_data = target_patients.get(pid, {})
                 
                 p = Patient(
-                    id=f"db-{pid}", trial_id="trial-glucozen", site_id=site.id,
+                    id=pid, trial_id="trial-glucozen", site_id=site.id,
                     external_id=pid, enrolled_at=now - timedelta(days=60),
                     status=target_data.get("status", "ACTIVE")
                 )
                 patients.append(p)
                 
-                # Generate 30 days of HRV readings
-                base_hrv = target_data.get("hrv", random.uniform(30.0, 50.0))
+                # Generate 30 days of HRV, SpO2, and Heart Rate readings
+                base_hrv = target_data.get("hrv", random.uniform(30.0, 55.0))
                 for day in range(30):
                     rec_time = now - timedelta(days=29 - day)
                     # Add noise but ensure the last reading is exactly the target HRV
                     if day == 29 and is_target:
-                        val = base_hrv
+                        hrv_val = base_hrv
                     else:
-                        val = base_hrv + random.uniform(-2.0, 5.0) if is_target else random.uniform(30.0, 50.0)
+                        hrv_val = base_hrv + random.uniform(-2.0, 5.0) if is_target else random.uniform(30.0, 55.0)
                         
                     readings.append(BiomarkerReading(
-                        patient_id=p.id, biomarker="HRV_SDNN", value=val, unit="ms",
+                        patient_id=p.id, biomarker="HRV_SDNN", value=hrv_val, unit="ms",
+                        recorded_at=rec_time, device_id="wearable-x1", source="Apple Watch", quality_flag="HIGH"
+                    ))
+                    
+                    # SpO2
+                    spo2_val = random.uniform(95.0, 100.0)
+                    readings.append(BiomarkerReading(
+                        patient_id=p.id, biomarker="SpO2", value=spo2_val, unit="%",
+                        recorded_at=rec_time, device_id="wearable-x1", source="Apple Watch", quality_flag="HIGH"
+                    ))
+                    
+                    # Heart Rate
+                    hr_val = random.uniform(60.0, 100.0)
+                    readings.append(BiomarkerReading(
+                        patient_id=p.id, biomarker="Heart_Rate", value=hr_val, unit="bpm",
                         recorded_at=rec_time, device_id="wearable-x1", source="Apple Watch", quality_flag="HIGH"
                     ))
                     
@@ -123,9 +129,9 @@ async def seed_db():
         # Add evaluations for the target patients to show up in alerts
         evals = []
         for pid, data in target_patients.items():
-            db_pid = f"db-{pid}"
-            # For PT-8091 (HRV=24), it was AT_RISK in v1.2 (<25) and v1.3 (<28)
-            # For PT-1102 (HRV=26), it was SAFE in v1.2 (<25) but AT_RISK in v1.3 (<28)
+            db_pid = pid
+            # For PT-0101 (HRV=24), it was AT_RISK in v1.2 (<25) and v1.3 (<28)
+            # For PT-0102 (HRV=26), it was SAFE in v1.2 (<25) but AT_RISK in v1.3 (<28)
             old_status = EvaluationStatus.AT_RISK if data["hrv"] < 25.0 else EvaluationStatus.SAFE
             
             evals.append(PatientEvaluation(

@@ -219,7 +219,7 @@ export const ReportView: React.FC = () => {
           <div className="flex items-center gap-4">
             <span className="flex items-center gap-1">
               <span className="material-symbols-outlined text-[14px]">memory</span>
-              Gemini 2.0 Flash
+              Gemini 2.5 Flash
             </span>
             <span>ICH E6 (R2) Aligned</span>
           </div>

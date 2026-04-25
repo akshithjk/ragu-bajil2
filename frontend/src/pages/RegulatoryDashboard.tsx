@@ -22,19 +22,19 @@ const STATUS_COLORS: Record<string, string> = {
 const AGENT_ICONS = ['description', 'rule', 'monitor_heart', 'summarize'];
 
 const AutoFetchStrip = () => {
-  const [mins, setMins] = useState(14);
+  const [elapsedSecs, setElapsedSecs] = useState(847); // Start at ~14 mins in for realism
   const [isSyncing, setIsSyncing] = useState(false);
   const [currentSource, setCurrentSource] = useState("");
 
   useEffect(() => {
-    // Background minute ticker
-    const minInterval = setInterval(() => {
-      setMins(m => m + 1);
-    }, 60000);
+    // Tick every second so the timer feels live
+    const secInterval = setInterval(() => {
+      setElapsedSecs(s => s + 1);
+    }, 1000);
 
-    // Random sync simulation every 30 to 60 seconds
+    // Simulate a sync cycle every 30-60 seconds
     const syncLoop = () => {
-      const delay = Math.random() * 30000 + 30000; 
+      const delay = Math.random() * 30000 + 30000;
       setTimeout(() => {
         setIsSyncing(true);
         const sources = ["FDA.gov", "EMA.europa.eu", "ICH.org", "CDSCO.gov.in"];
@@ -47,17 +47,23 @@ const AutoFetchStrip = () => {
             clearInterval(sourceInterval);
             setIsSyncing(false);
             setCurrentSource("");
-            setMins(0); // Reset minutes
-            syncLoop(); // Queue next sync
+            setElapsedSecs(0); // Reset to 0 after sync completes
+            syncLoop();
           }
-        }, 1500); // 1.5s per source
+        }, 1500);
       }, delay);
     };
 
     syncLoop();
-
-    return () => clearInterval(minInterval);
+    return () => clearInterval(secInterval);
   }, []);
+
+  const formatElapsed = (secs: number) => {
+    if (secs < 60) return `${secs} sec${secs !== 1 ? 's' : ''} ago`;
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m} min${m !== 1 ? 's' : ''} ${s}s ago`;
+  };
 
   return (
     <div className="bg-slate-900 text-slate-300 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between shadow-lg text-sm border border-slate-700 transition-all duration-500">
@@ -81,7 +87,7 @@ const AutoFetchStrip = () => {
         ) : (
           <span className="material-symbols-outlined text-[14px] text-green-400">check_circle</span>
         )}
-        {isSyncing ? 'Polling active...' : `Last checked: ${mins} ${mins === 1 ? 'min' : 'mins'} ago (6hr cycle)`}
+        {isSyncing ? 'Polling active...' : `Last checked: ${formatElapsed(elapsedSecs)} · Next in 6hr cycle`}
       </div>
     </div>
   );

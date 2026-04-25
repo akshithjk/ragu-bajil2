@@ -5,7 +5,7 @@ import {
   Tooltip, ReferenceLine, ResponsiveContainer, Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
-import { usePatients, usePatientReadings, useNotifyDoctor } from '../api/queries';
+import { usePatients, usePatientReadings } from '../api/queries';
 import { SITE_NAMES } from './DataManagerDashboard';
 
 type FilterMode = 'all' | 'flagged' | 'safe';
@@ -26,7 +26,6 @@ export const DoctorDashboard: React.FC = () => {
   const PATIENTS_PER_PAGE = 10;
 
   const { data: patientsData, isLoading } = usePatients();
-  const notifyDoctor = useNotifyDoctor();
 
   /* ── Derived patient list ── */
   const allPatients = useMemo(() => {
@@ -101,13 +100,6 @@ export const DoctorDashboard: React.FC = () => {
     setTimeout(() => setToast(null), 4000);
   };
 
-  const handleNotify = async () => {
-    if (!selectedPatient?.internalId) return;
-    try {
-      await notifyDoctor.mutateAsync(selectedPatient.internalId);
-      showToast('✓ Email notification sent via SendGrid', 'success');
-    } catch { showToast('Failed to send notification', 'error'); }
-  };
 
   const handleFilterMode = (mode: FilterMode) => { setFilterMode(mode); setCurrentPage(1); };
   const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => { setSearchQuery(e.target.value); setCurrentPage(1); };
@@ -402,12 +394,7 @@ export const DoctorDashboard: React.FC = () => {
                   <button onClick={() => navigate(`/dashboard/report/${selectedPatient.id}`)}
                     className="btn flex-1 justify-center py-2 bg-slate-800 hover:bg-slate-900 text-white shadow text-xs transition-all hover:-translate-y-0.5">
                     <span className="material-symbols-outlined text-[15px] mr-1">description</span>
-                    View Report
-                  </button>
-                  <button onClick={handleNotify} disabled={notifyDoctor.isPending}
-                    className="btn flex-1 justify-center py-2 bg-amber-500 hover:bg-amber-600 text-white shadow shadow-amber-500/30 text-xs disabled:opacity-60 transition-all hover:-translate-y-0.5">
-                    <span className="material-symbols-outlined text-[15px] mr-1">mail</span>
-                    {notifyDoctor.isPending ? 'Sending...' : 'SendGrid Alert'}
+                    View Full Report
                   </button>
                 </div>
                 <p className="text-center text-[10px] text-slate-400 uppercase tracking-wider">Scoped to Site {siteIndex} Only</p>

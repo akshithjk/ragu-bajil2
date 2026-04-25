@@ -333,37 +333,98 @@ async def notify_doctor(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # Send email notification via SendGrid
+    # 1. Find the patient's site so we can alert on ALL flagged patients at that site
+    query = select(Patient).options(selectinload(Patient.evaluations), selectinload(Patient.readings)).where(Patient.id == id)
+    result = await db.execute(query)
+    target_patient = result.scalars().unique().first()
+    if not target_patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    site_id = target_patient.site_id
+
+    # 2. Fetch ALL patients at this site and find the flagged ones
+    site_query = select(Patient).options(selectinload(Patient.evaluations), selectinload(Patient.readings)).where(Patient.site_id == site_id)
+    site_result = await db.execute(site_query)
+    site_patients = site_result.scalars().unique().all()
+
+    flagged_patients = []
+    for p in site_patients:
+        evals = sorted(p.evaluations, key=lambda e: e.evaluated_at) if p.evaluations else []
+        latest_eval = evals[-1] if evals else None
+        if latest_eval and latest_eval.flagged:
+            hrv_readings = [r for r in p.readings if r.biomarker == "HRV_SDNN"]
+            latest_hrv = round(hrv_readings[-1].value, 1) if hrv_readings else "N/A"
+            flagged_patients.append({"id": p.id, "hrv": latest_hrv})
+
+    total_flagged = len(flagged_patients)
+
+    # 3. Build patient rows for the email table
+    patient_rows = "".join(
+        f"""<tr style='border-bottom:1px solid #fee2e2'>
+               <td style='padding:8px 12px;font-weight:600;color:#1e293b'>{fp['id']}</td>
+               <td style='padding:8px 12px;color:#dc2626;font-weight:700'>{fp['hrv']} ms</td>
+               <td style='padding:8px 12px;color:#b91c1c'>⚠ AT RISK — Below Threshold</td>
+           </tr>"""
+        for fp in flagged_patients
+    ) or "<tr><td colspan='3' style='padding:8px 12px;color:#64748b'>No flagged patients found.</td></tr>"
+
+    # 4. Build HTML email body
+    html_body = f"""
+    <html>
+    <body style='font-family:Inter,Arial,sans-serif;background:#f8fafc;padding:32px'>
+      <div style='max-width:600px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08)'>
+        <div style='background:linear-gradient(135deg,#dc2626,#b91c1c);padding:28px 32px'>
+          <h1 style='color:#fff;margin:0;font-size:22px;font-weight:700'>🚨 ReguVigil Pharmacovigilance Alert</h1>
+          <p style='color:#fecaca;margin:8px 0 0;font-size:14px'>Trial: GlucoZen Phase III · Site: {site_id.upper()}</p>
+        </div>
+        <div style='padding:28px 32px'>
+          <p style='font-size:15px;color:#1e293b;margin:0 0 16px'>
+            Dear Dr. Ramesh K.,<br><br>
+            The ReguVigil AI pipeline has identified <strong style='color:#dc2626'>{total_flagged} patient(s)</strong> under your care at <strong>{site_id.upper()}</strong> who are currently <strong>AT RISK</strong> based on their latest HRV biomarker readings.
+          </p>
+          <table style='width:100%;border-collapse:collapse;margin:16px 0;border-radius:8px;overflow:hidden;border:1px solid #fee2e2'>
+            <thead>
+              <tr style='background:#fef2f2'>
+                <th style='padding:10px 12px;text-align:left;color:#7f1d1d;font-size:13px'>Patient ID</th>
+                <th style='padding:10px 12px;text-align:left;color:#7f1d1d;font-size:13px'>Latest HRV (SDNN)</th>
+                <th style='padding:10px 12px;text-align:left;color:#7f1d1d;font-size:13px'>Status</th>
+              </tr>
+            </thead>
+            <tbody>{patient_rows}</tbody>
+          </table>
+          <p style='font-size:14px;color:#475569;margin:16px 0'>Please log into your dashboard immediately to review these patients and take necessary clinical action.</p>
+          <a href='http://localhost:3000/dashboard/doctor' style='display:inline-block;background:#dc2626;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-top:8px'>View Doctor Dashboard →</a>
+        </div>
+        <div style='background:#f1f5f9;padding:16px 32px;font-size:12px;color:#94a3b8'>
+          This is an automated alert from the ReguVigil Pharmacovigilance AI System. Do not reply to this email.
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+
+    # 5. Send email via SendGrid
     sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
     from_email_address = os.environ.get('SENDGRID_FROM_EMAIL', 'suzxxpro@gmail.com')
-    to_email_address = os.environ.get('SENDGRID_TO_DOCTOR', 'sathwikbhat2@gmail.com')
-    
+    doctor_email = os.environ.get('SENDGRID_TO_DOCTOR', 'sathwikbhat2@gmail.com')
+    datamanager_email = os.environ.get('SENDGRID_TO_DATAMANAGER', 'drarjunbhat@gmail.com')
+
     if not sendgrid_api_key or sendgrid_api_key == "SG.your_sendgrid_api_key_here":
-        # For demo purposes if key is missing, pretend it succeeded
-        return {"status": "success", "message": "Simulated email sent (SendGrid key missing)"}
-        
+        return {"status": "success", "message": f"Simulated alert: {total_flagged} flagged patients (SendGrid key missing)", "flagged_count": total_flagged}
+
+    recipients = [doctor_email, datamanager_email]
     try:
         sg = sendgrid.SendGridAPIClient(api_key=sendgrid_api_key)
-        from_email = Email(from_email_address)
-        to_email = To(to_email_address)
-        subject = f"URGENT: Patient {id} Flagged - Action Required"
-        content = Content(
-            "text/html", 
-            f"""
-            <html>
-            <body>
-                <h2>Pharmacovigilance Alert</h2>
-                <p>Patient <strong>{id}</strong> has been flagged as AT RISK by the latest monitoring rules.</p>
-                <p>Please log in to the ReguVigil Doctor Dashboard to review their 30-day HRV trend and take necessary clinical action.</p>
-                <br>
-                <a href="http://localhost:3000/dashboard/doctor">View Patient Details</a>
-            </body>
-            </html>
-            """
-        )
-        mail = Mail(from_email, to_email, subject, content)
-        sg.client.mail.send.post(request_body=mail.get())
-        return {"status": "success", "message": "Email sent to Doctor"}
+        for recipient in recipients:
+            mail = Mail(
+                from_email=Email(from_email_address),
+                to_emails=To(recipient),
+                subject=f"🚨 URGENT: {total_flagged} Patient(s) AT RISK — Dr. Ramesh K. Site ({site_id.upper()})",
+                html_content=html_body
+            )
+            sg.client.mail.send.post(request_body=mail.get())
+        return {"status": "success", "message": f"Alert sent to {len(recipients)} recipients. {total_flagged} flagged patients reported.", "flagged_count": total_flagged}
     except Exception as e:
         print(f"SendGrid error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to send notification email")
+        raise HTTPException(status_code=500, detail=f"Failed to send notification: {str(e)}")
+

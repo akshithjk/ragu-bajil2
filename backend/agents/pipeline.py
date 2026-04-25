@@ -153,7 +153,13 @@ async def agent3_evaluate_patients(state: PipelineState) -> PipelineState:
             
             return {
                 **state, 
-                "flagged_patients": [{"id": e.id} for e in flagged_evals],
+                "flagged_patients": [
+                    {
+                        "eval_id": e.id,
+                        "patient_id": e.patient_id,
+                        "current_value": e.current_value
+                    } for e in flagged_evals
+                ],
                 "agent_timings": {**(state.get("agent_timings") or {}), "agent3_ms": elapsed}
             }
         except Exception as e:
@@ -169,17 +175,9 @@ async def agent4_generate_report(state: PipelineState) -> PipelineState:
         
         start = time.perf_counter()
         try:
-            from db.models import PatientEvaluation
-            from sqlalchemy import select
-            eval_ids = [f["id"] for f in state['flagged_patients']]
-            if eval_ids:
-                res = await db.execute(select(PatientEvaluation).filter(PatientEvaluation.id.in_(eval_ids)))
-                evals = res.scalars().all()
-            else:
-                evals = []
-                
-            # Need to pass run_id to agent4 as well
-            report_id = await generate_and_send_pv_report(list(evals), "trial-glucozen-001", state['new_rule_id'], run_id)
+            # Pass the enriched flagged_patients list directly — already has patient_id + current_value
+            flagged_list = state.get('flagged_patients', [])
+            report_id = await generate_and_send_pv_report(flagged_list, "trial-glucozen-001", state['new_rule_id'], run_id)
             
             # Hold RUNNING state for realistic demo duration (10-16s) before marking COMPLETE
             await asyncio.sleep(random.uniform(10.0, 16.0))
